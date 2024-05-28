@@ -57,17 +57,20 @@ void setup() {
 }
 
 void loop() {
-  handleMillisOverflow();
-  checksensors();
-  handlePredictsensor();
-  handleEstimateTimeSensor();
-  handleManualPumpSensor();
-  checkAlarmCondition();
-  controlPump();
-  displayRunningHours();
-  delay(100);
+  handleMillisOverflow(); // Handle overflow of millis() to prevent issues with long runtimes
+  checksensors(); // Check the state of each water level sensor
+  handlePredictsensor(); // Handle the predict water level button
+  handleEstimateTimeSensor(); // Handle the estimate time to full/empty button
+  handleManualPumpSensor(); // Handle the manual pump control button
+  checkAlarmCondition(); // Check if the water level is at a critical level
+  controlPump(); // Control the pump based on water level and manual control
+  displayRunningHours(); // Display the running hours on the LCD
+  delay(100); // Delay for stability
 }
 
+/**
+ * Handle overflow of millis() to ensure continuous operation.
+ */
 void handleMillisOverflow() {
   unsigned long currentMillis = millis();
   if (currentMillis < previousMillis) {
@@ -76,10 +79,17 @@ void handleMillisOverflow() {
   previousMillis = currentMillis;
 }
 
+/**
+ * Get the corrected value of millis() accounting for overflow.
+ * @return Corrected millis value.
+ */
 unsigned long getCorrectedMillis() {
   return millis() + overflowOffset;
 }
 
+/**
+ * Check the state of each water level sensor and handle trigger events.
+ */
 void checksensors() {
   for (byte i = 0; i < 6; i++) {
     byte sensorPin = sensorPins[i];
@@ -93,6 +103,10 @@ void checksensors() {
   }
 }
 
+/**
+ * Handle the event when a water level sensor is triggered.
+ * @param sensorIndex Index of the triggered sensor.
+ */
 void handlesensorTrigger(byte sensorIndex) {
   unsigned long currentTime = getCorrectedMillis();
   currentLevel = sensorIndex * 20; // Update current water level
@@ -106,6 +120,11 @@ void handlesensorTrigger(byte sensorIndex) {
   lastLevel = sensorIndex; // Update the last level
 }
 
+/**
+ * Calculate the rate of change of the water level.
+ * @param currentTime Current time in milliseconds.
+ * @param sensorIndex Index of the triggered sensor.
+ */
 void calculateRateOfChange(unsigned long currentTime, byte sensorIndex) {
   unsigned long timeDiff = currentTime - sensortriggermultipletime[lastLevel];
   float timeDiffMinutes = timeDiff / 60000.0; // Convert to minutes
@@ -120,6 +139,10 @@ void calculateRateOfChange(unsigned long currentTime, byte sensorIndex) {
   Serial.println(rateMsg);
 }
 
+/**
+ * Display the current water level on the LCD.
+ * @param sensorIndex Index of the triggered sensor.
+ */
 void displayWaterLevel(byte sensorIndex) {
   String levelMsg;
   switch (sensorIndex) {
@@ -134,6 +157,9 @@ void displayWaterLevel(byte sensorIndex) {
   Serial.println(levelMsg);
 }
 
+/**
+ * Handle the predict water level button.
+ */
 void handlePredictsensor() {
   bool currentPredictState = digitalRead(checkwaterlevelPin);
   if (currentPredictState == LOW && predictwaterlevel == HIGH) {
@@ -142,6 +168,9 @@ void handlePredictsensor() {
   predictwaterlevel = currentPredictState;
 }
 
+/**
+ * Predict the water level based on the current rate of change.
+ */
 void predictWaterLevel() {
   if (lastLevel != -1) {
     unsigned long currentTime = getCorrectedMillis();
@@ -159,6 +188,9 @@ void predictWaterLevel() {
   }
 }
 
+/**
+ * Handle the estimate time to full/empty button.
+ */
 void handleEstimateTimeSensor() {
   bool currentEstimateState = digitalRead(estimateTimePin);
   if (currentEstimateState == LOW && estimateTimeState == HIGH) {
@@ -167,6 +199,9 @@ void handleEstimateTimeSensor() {
   estimateTimeState = currentEstimateState;
 }
 
+/**
+ * Estimate the time to reach 100% or 0% water level based on the current rate of change.
+ */
 void estimateTimeToFullOrEmpty() {
   if (rateOfChange != 0 && lastLevel != -1) {
     float timeToTarget = 0;
@@ -184,28 +219,46 @@ void estimateTimeToFullOrEmpty() {
     displayMessage(3, estimateMsg);
     Serial.println(estimateMsg);
   } else {
-    String errorMsg = "Rate of change not available";
+    String errorMsg = "Rate of change is zero or not enough data";
     displayMessage(3, errorMsg);
     Serial.println(errorMsg);
   }
 }
 
+/**
+ * Handle the manual pump control button.
+ */
 void handleManualPumpSensor() {
   bool currentManualPumpState = digitalRead(manualPumpPin);
   if (currentManualPumpState == LOW && manualPumpState == HIGH) {
-    pumpManualState = !pumpManualState; // Toggle pump state
-    digitalWrite(pumpControlPin, pumpManualState ? HIGH : LOW);
-    String pumpMsg = pumpManualState ? "Pump manually ON" : "Pump manually OFF";
-    displayMessage(3, pumpMsg);
-    Serial.println(pumpMsg);
+    pumpManualState = !pumpManualState;
+    if (pumpManualState) {
+      digitalWrite(pumpControlPin, HIGH); // Turn on the pump
+      String pumpMsg = "Manual Pump ON";
+      displayMessage(3, pumpMsg);
+      Serial.println(pumpMsg);
+    } else {
+      digitalWrite(pumpControlPin, LOW); // Turn off the pump
+      String pumpMsg = "Manual Pump OFF";
+      displayMessage(3, pumpMsg);
+      Serial.println(pumpMsg);
+    }
   }
   manualPumpState = currentManualPumpState;
 }
 
+/**
+ * Check if the water level is at a critical level and display an alarm if necessary.
+ */
 void checkAlarmCondition() {
   if (currentLevel != -1 && (currentLevel <= 20 || currentLevel >= 80)) {
     if (lastAlarmLevel == -1 || abs(currentLevel - lastAlarmLevel) >= 20) {
-      String alarmMsg = (currentLevel <= 20) ? "ALARM: Low water level!" : "ALARM: High water level!";
+      String alarmMsg;
+      if (currentLevel <= 20) {
+        alarmMsg = "ALARM: Low water level!";
+      } else if (currentLevel >= 80) {
+        alarmMsg = "ALARM: High water level!";
+      }
       displayMessage(3, alarmMsg);
       Serial.println(alarmMsg);
       lastAlarmLevel = currentLevel;
@@ -213,6 +266,9 @@ void checkAlarmCondition() {
   }
 }
 
+/**
+ * Control the pump based on the water level and manual control state.
+ */
 void controlPump() {
   if (!pumpManualState) { // Only auto control pump if not in manual mode
     if (currentLevel == 5) { // Water level at 0%
@@ -229,6 +285,9 @@ void controlPump() {
   }
 }
 
+/**
+ * Display the running hours on the LCD.
+ */
 void displayRunningHours() {
   unsigned long currentMillis = getCorrectedMillis();
   unsigned long elapsedMillis = currentMillis - startTime;
@@ -244,6 +303,11 @@ void displayRunningHours() {
   Serial.println(runningHoursMsg);
 }
 
+/**
+ * Display a message on a specific row of the LCD.
+ * @param row The row number (0-3) where the message will be displayed.
+ * @param message The message to display.
+ */
 void displayMessage(int row, String message) {
   lcd.setCursor(0, row);
   lcd.print("                    "); // Clear the specific line
